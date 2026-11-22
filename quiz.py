@@ -10,7 +10,6 @@ users = {
     "استاد": {"password": "", "role": "teacher"}
 }
 
-# آزمون پیش‌فرض که از قبل آماده شده است
 exams = {
     "1": {
         "title": "آزمون مقدمات برنامه‌نویسی",
@@ -24,8 +23,9 @@ exams = {
     }
 }
 next_exam_id = 2
-
 results = {} 
+
+# متغیرهای موقت برای ساخت آزمون
 current_new_exam = {"title": "", "questions": []}
 
 # ==================== صدای کلیک ====================
@@ -185,12 +185,13 @@ VIEW_EXAMS = STYLE + CLICK_SOUND + JS_SOUND + """
     <h1>آزمون‌های آماده</h1>
     {% if exams %}
         {% for exam_id, exam in exams.items() %}
-            <div class="q-box" style="display: flex; justify-content: space-between; align-items: center;">
-                <div style="text-align: right;">
+            <div class="q-box" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">
+                <div style="text-align: right; flex: 1;">
                     <h3 style="color: #FF7043;">{{ exam.title }}</h3>
                     <p>تعداد سوالات: {{ exam.questions|length }}</p>
                 </div>
-                <div>
+                <div style="display: flex; gap: 10px;">
+                    <a href="/view_exams/{{ exam_id }}" class="btn btn-blue" style="padding: 10px 20px; font-size: 16px;">👁️ مشاهده کلید و سوالات</a>
                     <a href="/delete_exam/{{ exam_id }}" class="btn btn-red" style="padding: 10px 20px; font-size: 16px;" onclick="return confirm('آیا از حذف این آزمون مطمئن هستید؟');">🗑️ حذف آزمون</a>
                 </div>
             </div>
@@ -199,6 +200,23 @@ VIEW_EXAMS = STYLE + CLICK_SOUND + JS_SOUND + """
         <h2>هیچ آزمونی وجود ندارد.</h2>
     {% endif %}
     <div style="margin-top: 40px;"><a href="/teacher" class="btn btn-blue">بازگشت</a></div>
+    <div class="footer">طراحی و توسعه: هستی میرزایی</div>
+</div>
+"""
+
+VIEW_EXAM_DETAILS = STYLE + CLICK_SOUND + JS_SOUND + """
+<div class="container">
+    <h1>مشاهده سوالات و کلید: {{ exam.title }}</h1>
+    {% for q in exam.questions %}
+        <div class="q-box">
+            <h3 style="color: #0277BD; margin-bottom: 15px;">سوال {{ loop.index }}: {{ q.question }}</h3>
+            <p style="margin-bottom: 5px; {% if q.correct == '1' %}color: #2E7D32; font-weight: bold;{% endif %}">۱) {{ q.opt1 }} {% if q.correct == '1' %}✅ (گزینه صحیح){% endif %}</p>
+            <p style="margin-bottom: 5px; {% if q.correct == '2' %}color: #2E7D32; font-weight: bold;{% endif %}">۲) {{ q.opt2 }} {% if q.correct == '2' %}✅ (گزینه صحیح){% endif %}</p>
+            <p style="margin-bottom: 5px; {% if q.correct == '3' %}color: #2E7D32; font-weight: bold;{% endif %}">۳) {{ q.opt3 }} {% if q.correct == '3' %}✅ (گزینه صحیح){% endif %}</p>
+            <p style="margin-bottom: 5px; {% if q.correct == '4' %}color: #2E7D32; font-weight: bold;{% endif %}">۴) {{ q.opt4 }} {% if q.correct == '4' %}✅ (گزینه صحیح){% endif %}</p>
+        </div>
+    {% endfor %}
+    <div style="margin-top: 30px;"><a href="/view_exams" class="btn btn-blue">بازگشت به لیست آزمون‌ها</a></div>
     <div class="footer">طراحی و توسعه: هستی میرزایی</div>
 </div>
 """
@@ -329,16 +347,20 @@ PUBLIC_RESULTS_PAGE = STYLE + CLICK_SOUND + JS_SOUND + """
             <tr>
                 <td style="font-weight: bold; font-size: 22px;">{{ loop.index }}</td>
                 <td>
-                    {% if loop.index == 1 %}<span class="medal">🥇</span>
-                    {% elif loop.index == 2 %}<span class="medal">🥈</span>
-                    {% elif loop.index == 3 %}<span class="medal">🥉</span>
-                    {% else %}-{% endif %}
+                    {% if student.score > 0 %}
+                        {% if loop.index == 1 %}<span class="medal">🥇</span>
+                        {% elif loop.index == 2 %}<span class="medal">🥈</span>
+                        {% elif loop.index == 3 %}<span class="medal">🥉</span>
+                        {% else %}-{% endif %}
+                    {% else %}
+                        <span style="color: #999; font-size: 14px;">بدون مدال</span>
+                    {% endif %}
                 </td>
                 <td style="font-weight: bold; color: #0277BD;">{{ student.name }}</td>
                 <td style="color: #2E7D32; font-weight: bold; font-size: 22px;">{{ student.score }}</td>
             </tr>
         {% else %}
-            <tr><td colspan="4">هنوز هیچ دانشجویی آزمون نداده است.</td></tr>
+            <tr><td colspan="4">هنوز هیچ دانشجویی نمره مثبتی کسب نکرده است.</td></tr>
         {% endfor %}
     </table>
 
@@ -409,6 +431,12 @@ def manage_students():
 def view_exams():
     if session.get("role") != "teacher": return redirect(url_for("index"))
     return render_template_string(VIEW_EXAMS, exams=exams)
+
+@app.route("/view_exams/<exam_id>")
+def view_exam_details(exam_id):
+    if session.get("role") != "teacher": return redirect(url_for("index"))
+    if exam_id not in exams: return redirect(url_for("view_exams"))
+    return render_template_string(VIEW_EXAM_DETAILS, exam=exams[exam_id])
 
 @app.route("/delete_exam/<exam_id>")
 def delete_exam(exam_id):
@@ -492,16 +520,4 @@ def success():
 @app.route("/public_results")
 def public_results():
     leaderboard = []
-    for name, info in users.items():
-        if info.get("role") == "student":
-            leaderboard.append({"name": name, "score": info.get("total_correct", 0)})
-            
-    leaderboard.sort(key=lambda x: x["score"], reverse=True)
-    max_score = leaderboard[0]["score"] if leaderboard else 1
-    
-    return render_template_string(PUBLIC_RESULTS_PAGE, leaderboard=leaderboard, max_score=max_score)
-
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+    for name, info in users.items
