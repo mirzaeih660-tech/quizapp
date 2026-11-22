@@ -1,20 +1,32 @@
-from flask import Flask, render_template_string, request, redirect, url_for, session
+import os
 import socket
+from flask import Flask, render_template_string, request, redirect, url_for, session
 
 app = Flask(__name__)
 app.secret_key = 'hasti_mirzaei_quiz_app'
 
-# کاربران (استاد و دانشجوها)
+# ==================== داده‌ها ====================
 users = {
-    "استاد": {"password": "", "role": "teacher"} # رمز استاد حذف شد
+    "استاد": {"password": "", "role": "teacher"}
 }
 
-# دیکشنری برای ذخیره آزمون‌ها (هر آزمون یک ID و لیست سوالات خودش رو داره)
-exams = {} # { exam_id: {"title": "...", "questions": [ {...} ]} }
-next_exam_id = 1
+# آزمون پیش‌فرض که از قبل آماده شده است
+exams = {
+    "1": {
+        "title": "آزمون مقدمات برنامه‌نویسی",
+        "questions": [
+            {"question": "هدف اصلی دوره برنامه‌نویسی کامپیوتر چیست؟", "opt1": "ایجاد توانایی در نوشتن برنامه‌های کامپیوتری", "opt2": "طراحی سخت‌افزارهای کامپیوتری", "opt3": "تعمیر و نگهداری سیستم‌های کامپیوتری", "opt4": "یادگیری شبکه‌های اجتماعی", "correct": "1"},
+            {"question": "کدام نوع دانش به معنای «آگاهی از یک واقعیت» است؟", "opt1": "دانش اجباری (Imperative)", "opt2": "دانش بیانی (Declarative)", "opt3": "دانش محاسباتی", "opt4": "دانش الگوریتمی", "correct": "2"},
+            {"question": "یک «دستور» (الگوریتم) باید شامل چه ویژگی‌هایی باشد؟", "opt1": "فقط شامل یک مرحله ساده باشد", "opt2": "نیازی به زمان توقف ندارد", "opt3": "توالی از مراحل ساده، کنترل جریان و وسیله‌ای برای تعیین زمان توقف", "opt4": "فقط بتواند محاسبات ریاضی پیچیده انجام دهد", "correct": "3"},
+            {"question": "در معماری ساده کامپیوتر، کدام بخش وظیفه «انجام عملیات اصلی» را بر عهده دارد؟", "opt1": "حافظه", "opt2": "واحد کنترل", "opt3": "شمارنده برنامه", "opt4": "واحد حساب منطقی (ALU)", "correct": "4"},
+            {"question": "یک کامپیوتر با «برنامه ذخیره شده» از چه دستورالعمل‌های ابتدایی تشکیل شده است؟", "opt1": "حساب و منطق، تست‌های ساده، انتقال داده‌ها", "opt2": "فقط عملیات ریاضی", "opt3": "فقط ذخیره و بازیابی اطلاعات", "opt4": "طراحی گرافیک و پردازش تصویر", "correct": "1"}
+        ]
+    }
+}
+next_exam_id = 2
 
-# ذخیره نتایج و پاسخ‌های دانشجویان: { exam_id: { student_name: {"correct": 0, "wrong": 0, "answers": {q_id: ans}} } }
 results = {} 
+current_new_exam = {"title": "", "questions": []}
 
 # ==================== صدای کلیک ====================
 CLICK_SOUND = '<audio id="clickSound" src="data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=" preload="auto"></audio>'
@@ -80,11 +92,9 @@ STYLE = """
     .badge-green { color: white; background: #66BB6A; padding: 5px 10px; border-radius: 10px; font-weight: bold; }
     .badge-red { color: white; background: #EF5350; padding: 5px 10px; border-radius: 10px; font-weight: bold; }
 
-    /* انیمیشن مدال‌ها */
     .medal { font-size: 30px; animation: pop 1s infinite alternate; display: inline-block; }
     @keyframes pop { from { transform: scale(1); } to { transform: scale(1.2); } }
     
-    /* نمودار ستونی CSS */
     .chart-container { display: flex; align-items: flex-end; justify-content: space-around; height: 250px; background: #f9f9f9; padding: 20px; border-radius: 20px; margin-top: 30px; border-bottom: 3px solid #ccc; }
     .bar-wrap { display: flex; flex-direction: column; align-items: center; width: 12%; }
     .bar { width: 100%; background: #42A5F5; border-radius: 10px 10px 0 0; transition: height 1s; position: relative; }
@@ -175,9 +185,14 @@ VIEW_EXAMS = STYLE + CLICK_SOUND + JS_SOUND + """
     <h1>آزمون‌های آماده</h1>
     {% if exams %}
         {% for exam_id, exam in exams.items() %}
-            <div class="q-box">
-                <h3 style="color: #FF7043;">{{ exam.title }}</h3>
-                <p>تعداد سوالات: {{ exam.questions|length }}</p>
+            <div class="q-box" style="display: flex; justify-content: space-between; align-items: center;">
+                <div style="text-align: right;">
+                    <h3 style="color: #FF7043;">{{ exam.title }}</h3>
+                    <p>تعداد سوالات: {{ exam.questions|length }}</p>
+                </div>
+                <div>
+                    <a href="/delete_exam/{{ exam_id }}" class="btn btn-red" style="padding: 10px 20px; font-size: 16px;" onclick="return confirm('آیا از حذف این آزمون مطمئن هستید؟');">🗑️ حذف آزمون</a>
+                </div>
             </div>
         {% endfor %}
     {% else %}
@@ -197,7 +212,7 @@ ADD_EXAM_PAGE = STYLE + CLICK_SOUND + JS_SOUND + """
         <form method="POST">
             {% if count == 0 %}
                 <label>عنوان آزمون جدید (اجباری):</label>
-                <input type="text" name="title" required placeholder="مثلا: آزمون ایمنی">
+                <input type="text" name="title" required placeholder="مثلا: آزمون ایمنی" value="">
             {% endif %}
             
             <label>متن سوال:</label>
@@ -364,7 +379,6 @@ def login():
             session["role"] = "teacher"
             return redirect(url_for("teacher_dashboard"))
             
-        # دانشجو
         if not name: return "اسم نمی‌تونه خالی باشه"
         if name in users and users[name].get("role") == "student":
             if users[name]["password"] == password:
@@ -374,7 +388,6 @@ def login():
             else:
                 return render_template_string(LOGIN_PAGE, role_title=role_title, role=role, error="رمز اشتباه است")
         else:
-            # ثبت‌نام خودکار دانشجوی جدید
             users[name] = {"password": password, "role": "student", "total_correct": 0, "total_wrong": 0}
             session["name"] = name
             session["role"] = "student"
@@ -397,8 +410,14 @@ def view_exams():
     if session.get("role") != "teacher": return redirect(url_for("index"))
     return render_template_string(VIEW_EXAMS, exams=exams)
 
-# متغیر موقت برای ساخت آزمون جدید
-current_new_exam = {"title": "", "questions": []}
+@app.route("/delete_exam/<exam_id>")
+def delete_exam(exam_id):
+    if session.get("role") != "teacher": return redirect(url_for("index"))
+    if exam_id in exams:
+        del exams[exam_id]
+        if exam_id in results:
+            del results[exam_id]
+    return redirect(url_for("view_exams"))
 
 @app.route("/add_exam", methods=["GET", "POST"])
 def add_exam():
@@ -409,7 +428,7 @@ def add_exam():
         action = request.form.get("action")
         
         if not current_new_exam["questions"]:
-            current_new_exam["title"] = request.form.get("title", "بدون عنوان")
+            current_new_exam["title"] = request.form.get("title", "آزمون بدون عنوان")
             
         q_data = {
             "question": request.form.get("question", ""),
@@ -422,7 +441,7 @@ def add_exam():
         if action == "finish":
             exams[str(next_exam_id)] = current_new_exam.copy()
             next_exam_id += 1
-            current_new_exam = {"title": "", "questions": []} # ریست کردن
+            current_new_exam = {"title": "", "questions": []}
             return redirect(url_for("teacher_dashboard"))
             
         return redirect(url_for("add_exam"))
@@ -459,7 +478,6 @@ def take_exam(exam_id):
         if exam_id not in results: results[exam_id] = {}
         results[exam_id][student_name] = {"correct": correct_count, "wrong": wrong_count}
         
-        # آپدیت آمار کل دانشجو
         users[student_name]["total_correct"] += correct_count
         users[student_name]["total_wrong"] += wrong_count
         
@@ -473,7 +491,6 @@ def success():
 
 @app.route("/public_results")
 def public_results():
-    # محاسبه لیدربورد بر اساس مجموع نمرات در همه آزمون‌ها
     leaderboard = []
     for name, info in users.items():
         if info.get("role") == "student":
@@ -486,4 +503,5 @@ def public_results():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
